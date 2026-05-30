@@ -1009,3 +1009,7 @@ const app = {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 };
+
+window.app = app;
+window.state = state;
+window.DEFAULTS = DEFAULTS;

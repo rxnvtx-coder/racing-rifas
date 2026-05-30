@@ -118,3 +118,5 @@ class PixGenerator {
         return partialPayload + crc;
     }
 }
+
+window.PixGenerator = PixGenerator;

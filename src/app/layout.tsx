@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,8 +15,6 @@ export default function RootLayout({
     <html lang="pt-BR">
       <head>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-        <Script src="/pix.js" strategy="beforeInteractive" />
-        <Script src="/app.js" strategy="beforeInteractive" />
       </head>
       <body>{children}</body>
     </html>

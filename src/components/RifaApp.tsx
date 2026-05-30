@@ -9,14 +9,24 @@ export default function RifaApp() {
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
+        if (window.rifaAppLoaded) return;
+        window.rifaAppLoaded = true;
+
+        // Dynamically load the scripts AFTER the HTML is in the DOM
+        const scriptPix = document.createElement('script');
+        scriptPix.src = '/pix.js';
+        scriptPix.async = false;
         
-        // Wait for app.js to be loaded by Next.js Script tag
-        const checkApp = setInterval(() => {
-            if (window.app && window.DEFAULTS && window.state) {
-                clearInterval(checkApp);
-                initFirebaseOverrides();
-            }
-        }, 50);
+        const scriptApp = document.createElement('script');
+        scriptApp.src = '/app.js';
+        scriptApp.async = false;
+        
+        scriptApp.onload = () => {
+            initFirebaseOverrides();
+        };
+
+        document.body.appendChild(scriptPix);
+        document.body.appendChild(scriptApp);
 
         function initFirebaseOverrides() {
             if (window.rifaFirebaseInitialized) return;
@@ -118,6 +128,7 @@ export default function RifaApp() {
                 }
             };
 
+            // Re-run initialization to apply Firebase overrides properly and render the grid
             app.init();
         }
 
