@@ -48,15 +48,9 @@ const DEFAULTS = {
 };
 
 // ==========================================
-// INICIALIZAÇÃO DO APLICATIVO (ROBUSTA E COMPATÍVEL COM QUALQUER TEMPORIZAÇÃO)
+// INICIALIZAÇÃO DO APLICATIVO
 // ==========================================
-if (document.readyState === "complete" || document.readyState === "interactive") {
-    app.init();
-} else {
-    document.addEventListener("DOMContentLoaded", () => {
-        app.init();
-    });
-}
+// A inicialização é controlada pelo React (RifaApp.tsx) após aplicar as pontes do Firebase.
 
 const app = {
     init: function() {
@@ -138,17 +132,7 @@ const app = {
 
     // Configura máscaras de inputs e comportamentos reativos
     setupEventListeners: function() {
-        // Máscara para o WhatsApp do comprador
-        const phoneInput = document.getElementById("buyerPhone");
-        if (phoneInput) {
-            phoneInput.addEventListener("input", (e) => this.formatPhoneNumber(e));
-        }
-
-        // Máscara para o WhatsApp de consulta
-        const consultPhoneInput = document.getElementById("consultPhone");
-        if (consultPhoneInput) {
-            consultPhoneInput.addEventListener("input", (e) => this.formatPhoneNumber(e));
-        }
+        // As máscaras agora são tratadas via evento inline oninput direto no HTML pelo React
     },
 
     formatPhoneNumber: function(e) {
@@ -423,37 +407,60 @@ const app = {
         resizeCanvas();
         recenterMouse();
 
-        // Eventos
-        window.addEventListener("resize", () => {
+        // Se já existirem listeners antigos, remova-os do window
+        if (state.canvas.listeners) {
+            window.removeEventListener("resize", state.canvas.listeners.resize);
+            window.removeEventListener("mousemove", state.canvas.listeners.mousemove);
+            window.removeEventListener("mouseleave", state.canvas.listeners.mouseleave);
+            window.removeEventListener("touchmove", state.canvas.listeners.touchmove);
+            window.removeEventListener("touchend", state.canvas.listeners.touchend);
+        }
+
+        // Definindo as funções dos listeners
+        const handleResize = () => {
             resizeCanvas();
             recenterMouse();
-        });
+        };
 
-        // Evento mouse
-        window.addEventListener("mousemove", (event) => {
+        const handleMouseMove = (event) => {
             state.canvas.targetMouse = {
                 x: event.clientX,
                 y: event.clientY
             };
-        });
+        };
 
-        window.addEventListener("mouseleave", () => {
+        const handleMouseLeave = () => {
             recenterMouse();
-        });
+        };
 
-        // Evento toque mobile
-        window.addEventListener("touchmove", (event) => {
+        const handleTouchMove = (event) => {
             if (event.touches.length > 0) {
                 state.canvas.targetMouse = {
                     x: event.touches[0].clientX,
                     y: event.touches[0].clientY
                 };
             }
-        }, { passive: true });
+        };
 
-        window.addEventListener("touchend", () => {
+        const handleTouchEnd = () => {
             recenterMouse();
-        });
+        };
+
+        // Salvando no state
+        state.canvas.listeners = {
+            resize: handleResize,
+            mousemove: handleMouseMove,
+            mouseleave: handleMouseLeave,
+            touchmove: handleTouchMove,
+            touchend: handleTouchEnd
+        };
+
+        // Registrando
+        window.addEventListener("resize", handleResize);
+        window.addEventListener("mousemove", handleMouseMove);
+        window.addEventListener("mouseleave", handleMouseLeave);
+        window.addEventListener("touchmove", handleTouchMove, { passive: true });
+        window.addEventListener("touchend", handleTouchEnd);
 
         // Função para desenhar a bandeira de listras verticais
         const drawFlagBackground = () => {

@@ -9,129 +9,249 @@ export default function RifaApp() {
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
-        if (window.rifaAppLoaded) return;
-        window.rifaAppLoaded = true;
 
-        // Dynamically load the scripts AFTER the HTML is in the DOM
-        const scriptPix = document.createElement('script');
-        scriptPix.src = '/pix.js';
-        scriptPix.async = false;
-        
-        const scriptApp = document.createElement('script');
-        scriptApp.src = '/app.js';
-        scriptApp.async = false;
-        
-        scriptApp.onload = () => {
+        // Se os scripts já foram completamente carregados e o window.app está definido
+        if (window.app) {
             initFirebaseOverrides();
-        };
+        } else if (window.rifaScriptsInserted) {
+            // Se já foram inseridos mas ainda estão carregando, apenas registre o callback global
+            window.onRifaScriptsLoaded = () => {
+                initFirebaseOverrides();
+            };
+        } else {
+            window.rifaScriptsInserted = true;
+            
+            const scriptPix = document.createElement('script');
+            scriptPix.src = '/pix.js';
+            scriptPix.async = false;
+            
+            const scriptApp = document.createElement('script');
+            scriptApp.src = '/app.js';
+            scriptApp.async = false;
+            
+            window.onRifaScriptsLoaded = () => {
+                initFirebaseOverrides();
+            };
 
-        document.body.appendChild(scriptPix);
-        document.body.appendChild(scriptApp);
+            scriptApp.onload = () => {
+                if (window.onRifaScriptsLoaded) window.onRifaScriptsLoaded();
+            };
+
+            document.body.appendChild(scriptPix);
+            document.body.appendChild(scriptApp);
+        }
 
         function initFirebaseOverrides() {
-            if (window.rifaFirebaseInitialized) return;
-            window.rifaFirebaseInitialized = true;
-
             const app = window.app;
             const state = window.state;
             const DEFAULTS = window.DEFAULTS;
 
+            if (!app || !state || !DEFAULTS) {
+                console.error("Rifa scripts loaded, but globals are missing!");
+                return;
+            }
+
+            // Evitar múltiplas inicializações Firebase
+            if (window.rifaFirebaseInitialized) {
+                // Já inicializado antes, mas como montamos o componente novamente,
+                // precisamos re-inicializar o estado e re-renderizar para o novo DOM!
+                
+                // Limpar loops e timers antigos para evitar duplicidade
+                if (state.canvas && state.canvas.animationId) {
+                    window.cancelAnimationFrame(state.canvas.animationId);
+                    state.canvas.animationId = null;
+                }
+                if (state.expirationIntervalId) {
+                    clearInterval(state.expirationIntervalId);
+                    state.expirationIntervalId = null;
+                }
+                if (state.checkoutTimerInterval) {
+                    clearInterval(state.checkoutTimerInterval);
+                    state.checkoutTimerInterval = null;
+                }
+                
+                // Rodar init novamente para re-vincular os eventos e re-renderizar no novo DOM
+                app.init();
+                return;
+            }
+            window.rifaFirebaseInitialized = true;
+
+            // Sobrescrever loadLocalStorage
             app.loadLocalStorage = async function() {
                 try {
+                    // Carregar Configurações
                     const snapSettings = await getDoc(doc(db, 'rifa', 'settings'));
-                    if(snapSettings.exists()) state.settings = snapSettings.data();
-                    else {
+                    if (snapSettings.exists()) {
+                        state.settings = snapSettings.data();
+                    } else {
                         state.settings = { ...DEFAULTS.settings };
                         await setDoc(doc(db, 'rifa', 'settings'), state.settings);
                     }
 
+                    // Carregar Números
                     const snapNumbers = await getDoc(doc(db, 'rifa', 'numbers'));
-                    if(snapNumbers.exists()) state.numbers = snapNumbers.data().data;
-                    else state.numbers = [];
-
-                    const snapSales = await getDoc(doc(db, 'rifa', 'sales'));
-                    if(snapSales.exists()) state.sales = snapSales.data().data;
-                    else state.sales = [];
-
-                    if (state.numbers.length === 0) {
-                        app.generateNumbers();
-                        await app.saveState();
+                    if (snapNumbers.exists()) {
+                        state.numbers = snapNumbers.data().data;
+                    } else {
+                        state.numbers = [];
                     }
 
+                    // Carregar Vendas
+                    const snapSales = await getDoc(doc(db, 'rifa', 'sales'));
+                    if (snapSales.exists()) {
+                        state.sales = snapSales.data().data;
+                    } else {
+                        state.sales = [];
+                    }
+
+                    // Se não houver números, gerar iniciais
+                    if (state.numbers.length === 0) {
+                        await app.generateInitialNumbers();
+                    }
+
+                    // Ouvir atualizações em tempo real dos Números
                     onSnapshot(doc(db, 'rifa', 'numbers'), (docSnap) => {
-                        if(docSnap.exists() && state.numbers.length > 0) {
+                        if (docSnap.exists()) {
                             state.numbers = docSnap.data().data;
                             app.renderNumbersGrid();
-                            app.updateCartUI();
-                            app.updateProgress();
+                            app.renderCart();
+                            app.renderProgress();
                         }
                     });
 
+                    // Ouvir atualizações em tempo real das Vendas
                     onSnapshot(doc(db, 'rifa', 'sales'), (docSnap) => {
-                        if(docSnap.exists() && state.sales.length > 0) {
+                        if (docSnap.exists()) {
                             state.sales = docSnap.data().data;
-                            if(state.isAdminLoggedIn) {
-                                app.renderAdminSales();
+                            const adminPanel = document.getElementById("adminPanel");
+                            if (adminPanel && adminPanel.style.display === "block") {
+                                app.renderAdminPanel();
                             }
                         }
                     });
 
+                    // Ouvir atualizações em tempo real das Configurações
                     onSnapshot(doc(db, 'rifa', 'settings'), (docSnap) => {
-                        if(docSnap.exists()) {
+                        if (docSnap.exists()) {
                             state.settings = docSnap.data();
                             app.renderPublicUI();
+                            app.renderNumbersGrid();
                         }
                     });
 
+                    // Renderização Inicial
                     app.renderPublicUI();
                     app.renderNumbersGrid();
-                    app.updateProgress();
+                    app.renderProgress();
                     app.initCanvasHero();
                 } catch (e) {
-                    console.error("Firebase init error", e);
+                    console.error("Erro na inicialização do Firebase:", e);
                 }
             };
 
+            // Sobrescrever saveState para persistir no Firebase
             app.saveState = async function() {
                 try {
                     await setDoc(doc(db, 'rifa', 'numbers'), { data: state.numbers });
                     await setDoc(doc(db, 'rifa', 'sales'), { data: state.sales });
                 } catch (e) {
-                    console.error("Firebase save state error", e);
+                    console.error("Erro ao salvar estado no Firebase:", e);
                 }
             };
 
+            // Sobrescrever saveData para usar saveState
+            app.saveData = async function() {
+                await app.saveState();
+            };
+
+            // Sobrescrever generateInitialNumbers para salvar no Firebase
+            app.generateInitialNumbers = async function() {
+                state.numbers = [];
+                for (let i = 1; i <= 100; i++) {
+                    const numStr = i.toString().padStart(2, '0');
+                    state.numbers.push({
+                        id: numStr,
+                        status: 'available',
+                        buyerName: '',
+                        buyerPhone: '',
+                        reservedAt: null,
+                        saleId: null
+                    });
+                }
+                await app.saveState();
+            };
+
+            // Sobrescrever resetRifaData para limpar no Firebase
+            app.resetRifaData = async function() {
+                if (confirm("🚨 ATENÇÃO! Você está prestes a LIMPAR toda a Rifa! Isso apagará todos os compradores, faturamentos e reservas atuais. Todos os 100 números ficarão disponíveis novamente. Deseja continuar?")) {
+                    state.sales = [];
+                    await app.generateInitialNumbers();
+                    
+                    app.renderAdminPanel();
+                    app.renderNumbersGrid();
+                    app.renderProgress();
+                    
+                    alert("Rifa limpa com sucesso!");
+                }
+            };
+
+            // Sobrescrever saveSettings para salvar no Firebase
             app.saveSettings = async function(event) {
-                if(event) event.preventDefault();
+                if (event) event.preventDefault();
+                
                 state.settings.title = document.getElementById("setRifaTitle").value.trim();
                 state.settings.description = document.getElementById("setRifaDesc").value.trim();
                 state.settings.pixKey = document.getElementById("setPixKey").value.trim();
                 state.settings.pixName = document.getElementById("setPixName").value.trim();
                 state.settings.pixCity = document.getElementById("setPixCity").value.trim();
-                state.settings.ticketPrice = document.getElementById("setTicketPrice").value;
+                state.settings.ticketPrice = parseFloat(document.getElementById("setTicketPrice").value);
+                state.settings.whatsappSupport = document.getElementById("setWhatsappSupport").value.trim();
+                
                 state.settings.prize1_title = document.getElementById("setPrizeTitle1").value.trim();
                 state.settings.prize1_desc = document.getElementById("setPrizeDesc1").value.trim();
                 state.settings.prize2_title = document.getElementById("setPrizeTitle2").value.trim();
                 state.settings.prize2_desc = document.getElementById("setPrizeDesc2").value.trim();
                 state.settings.prize3_title = document.getElementById("setPrizeTitle3").value.trim();
                 state.settings.prize3_desc = document.getElementById("setPrizeDesc3").value.trim();
-                const newPass = document.getElementById("setAdminPassword").value.trim();
-                if (newPass) state.settings.adminPassword = newPass;
+
+                const newPwd = document.getElementById("setAdminPassword").value;
+                if (newPwd) {
+                    state.settings.adminPassword = newPwd;
+                    document.getElementById("setAdminPassword").value = "";
+                }
 
                 try {
                     await setDoc(doc(db, 'rifa', 'settings'), state.settings);
                     app.renderPublicUI();
+                    app.renderNumbersGrid();
                     app.openModal('modalConfigSaved');
                 } catch (e) {
-                    console.error("Firebase save error", e);
+                    console.error("Erro ao salvar configurações no Firebase:", e);
                     alert("Erro ao salvar no BD.");
                 }
             };
 
-            // Re-run initialization to apply Firebase overrides properly and render the grid
+            // Sobrescrever init para ser assíncrono e evitar race conditions
+            app.init = async function() {
+                // Configurar o WhatsApp suporte na primeira carga
+                if (!state.settings || !state.settings.whatsappSupport) {
+                    state.settings = state.settings || {};
+                    state.settings.whatsappSupport = DEFAULTS.settings.whatsappSupport;
+                }
+                
+                await this.loadLocalStorage();
+                this.checkExpiredReservations();
+                
+                // Configurar o intervalo periódico de expiração (garantindo apenas 1 rodando)
+                if (state.expirationIntervalId) {
+                    clearInterval(state.expirationIntervalId);
+                }
+                state.expirationIntervalId = setInterval(() => this.checkExpiredReservations(), 30000);
+            };
+
+            // Inicializar pela primeira vez
             app.init();
         }
-
     }, []);
 
     return (
@@ -531,7 +651,7 @@ export default function RifaApp() {
                         </div>
                         <div class="form-group">
                             <label for="buyerPhone">WhatsApp (com DDD)</label>
-                            <input type="tel" id="buyerPhone" class="form-control" placeholder="ex: (11) 99999-9999" required>
+                            <input type="tel" id="buyerPhone" class="form-control" placeholder="ex: (11) 99999-9999" oninput="app.formatPhoneNumber(event)" required>
                         </div>
                         <button type="submit" class="checkout-btn" id="btnFinalize">
                             <i class="fa-solid fa-lock"></i> Reservar e Pagar via Pix
@@ -557,7 +677,7 @@ export default function RifaApp() {
                 <form id="consultTicketsForm" onsubmit="app.consultTickets(event)">
                     <div class="form-group">
                         <label for="consultPhone">Digite o seu WhatsApp (com DDD)</label>
-                        <input type="tel" id="consultPhone" class="form-control" placeholder="ex: (11) 99999-9999" required>
+                        <input type="tel" id="consultPhone" class="form-control" placeholder="ex: (11) 99999-9999" oninput="app.formatPhoneNumber(event)" required>
                     </div>
                     <button type="submit" class="checkout-btn">
                         <i class="fa-solid fa-search"></i> Buscar Cotas
